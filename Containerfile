@@ -3,7 +3,7 @@ FROM ghcr.io/forem/ruby:3.1.4@sha256:d072fde5b0bb0f1374e308f7fcf1283e379e2a28a61
 FROM base as builder
 
 # This is provided by BuildKit
-ARG TARGETARCH
+ARG TARGETARCH=amd64
 
 USER root
 
