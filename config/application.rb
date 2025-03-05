@@ -58,6 +58,9 @@ module PracticalDeveloper
     ### END FRAMEWORK DEFAULT OVERIDES
     config.active_record.use_yaml_unsafe_load = true
 
+    ### SOLVE SUBFOREM_ID BUG
+    config.active_record.partial_inserts = false
+
     # Disable auto adding of default load paths to $LOAD_PATH
     # Setting this to false saves Ruby from checking these directories when
     # resolving require calls with relative paths, and saves Bootsnap work and
