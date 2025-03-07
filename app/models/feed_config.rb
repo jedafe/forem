@@ -7,6 +7,7 @@ class FeedConfig < ApplicationRecord
     user_follow_ids = user.cached_following_users_ids + (activity_store&.recent_users&.compact || [])
     organization_follow_ids = user.cached_following_organizations_ids + (activity_store&.recent_organizations&.compact || [])
     tag_names = activity_store&.relevant_tags || user.cached_followed_tag_names
+    label_names = activity_store&.recent_labels || []
 
     activity_tracked_pageview_time = activity_store&.recently_viewed_articles&.second
     time_of_second_latest_page_view = activity_tracked_pageview_time ? activity_tracked_pageview_time[1].to_datetime : 4.days.ago
@@ -39,6 +40,14 @@ class FeedConfig < ApplicationRecord
         "articles.cached_tag_list ~ '[[:<:]]#{tag}[[:>:]]'"
       }.join(' OR ') + " THEN #{tag_follow_weight} ELSE 0 END"
       terms << "(#{tag_condition})"
+    end
+
+    ## Labels slightly different because we can use native Postgres array operators
+    if label_match_weight.positive? && label_names.present?
+      label_condition = "CASE WHEN " + label_names.map { |label|
+        "? = ANY(articles.cached_label_list)"
+      }.join(' OR ') + " THEN #{label_match_weight} ELSE 0 END"
+      terms << "(#{label_condition})"
     end
 
     terms << "((1.0 / (1.0 + (EXTRACT(epoch FROM (NOW() - articles.published_at)) / 3600.0))) * #{recency_weight})" if recency_weight.positive?
@@ -80,24 +89,25 @@ class FeedConfig < ApplicationRecord
 
   def create_slightly_modified_clone!
     clone = dup
-    clone.comment_recency_weight = comment_recency_weight * (1 + rand(0.0..0.15))
-    clone.comment_score_weight = comment_score_weight * (1 + rand(0.0..0.15))
-    clone.feed_success_weight = feed_success_weight * (1 + rand(0.0..0.15))
-    clone.label_match_weight = label_match_weight * (1 + rand(0.0..0.15))
-    clone.lookback_window_weight = lookback_window_weight * (1 + rand(0.0..0.15))
-    clone.organization_follow_weight = organization_follow_weight * (1 + rand(0.0..0.15))
-    clone.precomputed_selections_weight = precomputed_selections_weight * (1 + rand(0.0..0.15))
-    clone.recency_weight = recency_weight * (1 + rand(0.0..0.15))
-    clone.score_weight = score_weight * (1 + rand(0.0..0.15))
-    clone.tag_follow_weight = tag_follow_weight * (1 + rand(0.0..0.15))
-    clone.user_follow_weight = user_follow_weight * (1 + rand(0.0..0.15))
-    clone.randomness_weight = randomness_weight * (1 + rand(0.0..0.15))
-    clone.recent_article_suppression_rate = recent_article_suppression_rate * (1 + rand(0.0..0.15))
-    clone.published_today_weight = published_today_weight * (1 + rand(0.0..0.15))
-    clone.featured_weight = featured_weight * (1 + rand(0.0..0.15))
-    clone.clickbait_score_weight = clickbait_score_weight * (1 + rand(0.0..0.15))
-    clone.compellingness_score_weight = compellingness_score_weight * (1 + rand(0.0..0.15))
-    clone.language_match_weight = language_match_weight * (1 + rand(0.0..0.15))
+    clone.comment_recency_weight = comment_recency_weight * rand(0.9..1.1)
+    clone.comment_score_weight = comment_score_weight * rand(0.9..1.1)
+    clone.feed_success_weight = feed_success_weight * rand(0.9..1.1)
+    clone.label_match_weight = label_match_weight * rand(0.9..1.1)
+    clone.lookback_window_weight = lookback_window_weight * rand(0.9..1.1)
+    clone.organization_follow_weight = organization_follow_weight * rand(0.9..1.1)
+    clone.precomputed_selections_weight = precomputed_selections_weight * rand(0.9..1.1)
+    clone.recency_weight = recency_weight * rand(0.9..1.1)
+    clone.score_weight = score_weight * rand(0.9..1.1)
+    clone.tag_follow_weight = tag_follow_weight * rand(0.9..1.1)
+    clone.user_follow_weight = user_follow_weight * rand(0.9..1.1)
+    clone.randomness_weight = randomness_weight * rand(0.9..1.1)
+    clone.recent_article_suppression_rate = recent_article_suppression_rate * rand(0.9..1.1)
+    clone.published_today_weight = published_today_weight * rand(0.9..1.1)
+    clone.featured_weight = featured_weight * rand(0.9..1.1)
+    clone.clickbait_score_weight = clickbait_score_weight * rand(0.9..1.1)
+    clone.compellingness_score_weight = compellingness_score_weight * rand(0.9..1.1)
+    clone.language_match_weight = language_match_weight * rand(0.9..1.1)
+    clone.feed_impressions_count = 0
     clone.save
   end
 end
