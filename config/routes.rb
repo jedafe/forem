@@ -40,9 +40,7 @@ Rails.application.routes.draw do
 
     # The lambda (e.g. `->`) allows for dynamic checking.  In other words we check with each
     # request.
-    constraints(->(_req) { Listing.feature_enabled? }) do
       draw :listing
-    end
 
     namespace :stories, defaults: { format: "json" } do
       resource :feed, only: [:show] do
@@ -115,6 +113,7 @@ Rails.application.routes.draw do
     end
 
     resources :magic_links, only: [:show, :create, :new]
+    resources :bottom_items, only: [:index]
 
     resources :messages, only: [:create]
     resources :articles, only: %i[update create destroy] do
