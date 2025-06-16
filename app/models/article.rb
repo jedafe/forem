@@ -462,6 +462,22 @@ class Article < ApplicationRecord
     order(:score).where("score >= ?", average_score)
   }
 
+  scope :followed_by, ->(user) do
+    where(<<~SQL.squish, user_id: user.id)
+      EXISTS (
+        SELECT 1
+        FROM follows AS f
+        WHERE f.follower_id = :user_id
+          AND f.follower_type = 'User'
+          AND f.blocked = FALSE
+          AND (
+                (f.followable_type = 'User'         AND f.followable_id = articles.user_id)
+             OR (f.followable_type = 'Organization' AND f.followable_id = articles.organization_id)
+          )
+      )
+    SQL
+  end
+
   def self.average_score
     Rails.cache.fetch("article_average_score", expires_in: 1.day) do
       unscoped { where(score: 0..).average(:score) } || 0.0
@@ -641,7 +657,15 @@ class Article < ApplicationRecord
     base_subscriber_adjustment = user.base_subscriber? ? Settings::UserExperience.index_minimum_score : 0
     spam_adjustment = user.spam? ? -500 : 0
     negative_reaction_adjustment = Reaction.where(reactable_id: user_id, reactable_type: "User").sum(:points)
-    self.score = reactions.sum(:points) + spam_adjustment + negative_reaction_adjustment + base_subscriber_adjustment
+
+    user_featured_count_adjustment = 0
+    featured_count = user.articles.featured.count
+    user_featured_count_adjustment = ([featured_count, 10].min + Math.log(featured_count + 1)).to_i
+    user_negative_count_adjustment = 0
+    negative_count = user.articles.where("score < -10").count
+    user_negative_count_adjustment = -([negative_count, 3].min + Math.log(negative_count + 1)).to_i if negative_count.positive?
+
+    self.score = reactions.sum(:points) + spam_adjustment + negative_reaction_adjustment + base_subscriber_adjustment + user_featured_count_adjustment + user_negative_count_adjustment
     accepted_max = [max_score, user&.max_score.to_i].min
     accepted_max = [max_score, user&.max_score.to_i].max if accepted_max.zero?
     self.score = accepted_max if accepted_max.positive? && accepted_max < score
@@ -857,7 +881,7 @@ class Article < ApplicationRecord
 
     front_matter = result.front_matter
 
-    if front_matter.any?
+    if front_matter.respond_to?(:any?) && front_matter.any?
       evaluate_front_matter(front_matter)
     elsif tag_list.any?
       set_tag_list(tag_list)
