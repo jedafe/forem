@@ -346,7 +346,40 @@ RSpec.describe Article do
           end
         end
       end
-    end  
+    end
+
+    describe "#restrict_type_based_on_role" do
+      context "when user is an admin" do
+        before { article.user.add_role(:admin) }
+        it "allows setting type_of to 'fullscreen_embed'" do
+          article.type_of = "fullscreen_embed"
+          expect(article).to be_valid
+        end
+        it "allows setting type_of to 'status'" do
+          article.type_of = "status"
+          expect(article).to be_valid
+        end
+        it "allows setting type_of to 'full_post'" do
+          article.type_of = "full_post"
+          expect(article).to be_valid
+        end
+      end
+      context "when user is not an admin" do
+        before { article.user.remove_role(:admin) }
+        it "does not allow setting type_of to 'fullscreen_embed'" do
+          article.type_of = "fullscreen_embed"
+          expect(article).not_to be_valid
+        end
+        it "allows setting type_of to 'status'" do
+          article.type_of = "status"
+          expect(article).to be_valid
+        end
+        it "allows setting type_of to 'full_post'" do
+          article.type_of = "full_post"
+          expect(article).to be_valid
+        end
+      end
+    end
 
     describe "#main_image_background_hex_color" do
       it "must have true hex for image background" do
@@ -1363,10 +1396,56 @@ RSpec.describe Article do
     end
 
     describe "spam" do
-      it "delegates spam handling to Spam::Handler.handle_article!" do
-        allow(Spam::Handler).to receive(:handle_article!).with(article: article).and_call_original
-        article.save
-        expect(Spam::Handler).to have_received(:handle_article!).with(article: article)
+      it "enqueues Articles::HandleSpamWorker on save" do
+        sidekiq_assert_enqueued_jobs(1, only: Articles::HandleSpamWorker) do
+          article.save
+        end
+      end
+    end
+
+    describe "create conditional autovomits" do
+      let(:worker)  { Articles::HandleSpamWorker }
+      let!(:article) { create(:article, published: true) }
+
+      context "within one minute of publishing" do
+        it "enqueues for body_markdown changes" do
+          sidekiq_assert_enqueued_jobs(1, only: worker) do
+            article.update(body_markdown: "👀 fresh body change")
+          end
+        end
+
+        it "enqueues for any other attribute change" do
+          sidekiq_assert_enqueued_jobs(1, only: worker) do
+            article.update(title: "fresh title tweak")
+          end
+        end
+      end
+
+      context "more than one minute after publishing" do
+        before { article.update_column(:published_at, 2.minutes.ago) }
+
+        it "enqueues for body_markdown changes" do
+          sidekiq_assert_enqueued_jobs(1, only: worker) do
+            article.update(body_markdown: "🚽 delayed body change")
+          end
+        end
+
+        it "does not enqueue for non-body changes" do
+          sidekiq_assert_no_enqueued_jobs(only: worker) do
+            article.update(title: "delayed title tweak")
+          end
+        end
+      end
+
+      context "when the article is not published" do
+        let(:draft) { create(:article, published: false) }
+
+        it "never enqueues" do
+          sidekiq_assert_no_enqueued_jobs(only: worker) do
+            draft.save
+            draft.update(title: "still draft")
+          end
+        end
       end
     end
 

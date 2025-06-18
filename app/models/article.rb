@@ -125,6 +125,7 @@ class Article < ApplicationRecord
   enum type_of: {
     full_post: 0,
     status: 1,
+    fullscreen_embed: 2,
 }
 
   has_one :discussion_lock, dependent: :delete
@@ -231,6 +232,7 @@ class Article < ApplicationRecord
   validate :title_length_based_on_type_of
   validate :title_unique_for_user_past_five_minutes
   validate :restrict_attributes_with_status_types
+  validate :restrict_type_based_on_role
   validate :canonical_url_must_not_have_spaces
   validate :validate_collection_permission
   validate :validate_tag
@@ -343,6 +345,7 @@ class Article < ApplicationRecord
 
   scope :full_posts, -> { where(type_of: :full_post) }
   scope :statuses, -> { where(type_of: :status) }
+  scope :fullscreen_embeds, -> { where(type_of: :fullscreen_embed) }
 
   scope :not_authored_by, ->(user_id) { where.not(user_id: user_id) }
 
@@ -859,6 +862,15 @@ class Article < ApplicationRecord
     end
   end
 
+  def restrict_type_based_on_role
+    return if %w[full_post status].include?(type_of)
+
+    # Only allow fullscreen_embed for super admins and admins
+    if type_of == "fullscreen_embed" && !user.any_admin?
+      errors.add(:type_of, "fullscreen_embed is only allowed for super admins and admins")
+    end
+  end
+
   def title_unique_for_user_past_five_minutes
     # Validates that the user did not create an article with the same title in the last five minutes
     return unless user_id && title
@@ -1167,7 +1179,10 @@ class Article < ApplicationRecord
   end
 
   def create_conditional_autovomits
-    Spam::Handler.handle_article!(article: self)
+    return unless published
+    return unless saved_change_to_body_markdown? || published_at > 1.minute.ago
+  
+    Articles::HandleSpamWorker.perform_async(id)
   end
 
   def async_bust
