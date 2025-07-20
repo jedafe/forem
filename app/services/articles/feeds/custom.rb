@@ -28,6 +28,8 @@ module Articles
           .limited_column_select
           .includes(top_comments: :user)
           .includes(:distinct_reaction_categories)
+          .includes(:context_notes)
+          .includes(:subforem)
           .from_subforem
 
         if @user

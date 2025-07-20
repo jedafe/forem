@@ -147,6 +147,7 @@ class Article < ApplicationRecord
   #     counter_culture to do some additional tallies
   has_many :rating_votes, dependent: :destroy
   has_many :tag_adjustments
+  has_many :context_notes, dependent: :delete_all
   has_many :top_comments,
            lambda {
              where(comments: { score: 11.. }, ancestry: nil, hidden_by_commentable_user: false, deleted: false)
@@ -248,6 +249,7 @@ class Article < ApplicationRecord
   before_validation :replace_blank_title_for_status
   before_validation :remove_prohibited_unicode_characters
   before_validation :remove_invalid_published_at
+  before_validation :get_youtube_embed_url
   before_save :set_cached_entities
   before_save :set_all_dates
 
@@ -262,6 +264,7 @@ class Article < ApplicationRecord
   after_save :bust_cache
   after_save :collection_cleanup
   after_save :generate_social_image
+  after_save :generate_context_notes
 
   after_update_commit :update_notifications, if: proc { |article|
                                                    article.notifications.any? && !article.saved_changes.empty?
@@ -357,8 +360,8 @@ class Article < ApplicationRecord
   scope :from_subforem, lambda { |subforem_id = nil|
     subforem_id ||= RequestStore.store[:subforem_id]
     if subforem_id.present? && subforem_id == RequestStore.store[:root_subforem_id]
-      # No additional conditions; just return the current scope
-      where(nil)
+      # Includes articles with no subforem or subforem_id in Subforem.cached_discoverable_ids
+      where("articles.subforem_id IN (?) OR articles.subforem_id IS NULL", [nil] + Subforem.cached_discoverable_ids)
     elsif [0, RequestStore.store[:default_subforem_id]].include?(subforem_id.to_i)
       where("articles.subforem_id IN (?) OR articles.subforem_id IS NULL", [nil, subforem_id, RequestStore.store[:default_subforem_id].to_i])
     else
@@ -455,7 +458,6 @@ class Article < ApplicationRecord
   scope :with_video, lambda {
                        published
                          .where.not(video: [nil, ""])
-                         .where.not(video_thumbnail_url: [nil, ""])
                          .where("score > ?", -4)
                      }
 
@@ -667,8 +669,10 @@ class Article < ApplicationRecord
     user_negative_count_adjustment = 0
     negative_count = user.articles.where("score < -10").count
     user_negative_count_adjustment = -([negative_count, 3].min + Math.log(negative_count + 1)).to_i if negative_count.positive?
+    # Context notes are currently only a positive indicator. In the future, they could be negative and this should be changed.
+    context_note_adjustment = context_notes.size
 
-    self.score = reactions.sum(:points) + spam_adjustment + negative_reaction_adjustment + base_subscriber_adjustment + user_featured_count_adjustment + user_negative_count_adjustment
+    self.score = reactions.sum(:points) + spam_adjustment + negative_reaction_adjustment + base_subscriber_adjustment + user_featured_count_adjustment + user_negative_count_adjustment + context_note_adjustment
     accepted_max = [max_score, user&.max_score.to_i].min
     accepted_max = [max_score, user&.max_score.to_i].max if accepted_max.zero?
     self.score = accepted_max if accepted_max.positive? && accepted_max < score
@@ -762,7 +766,28 @@ class Article < ApplicationRecord
     write_attribute :cached_label_list, (adjusted_input || [])
   end
 
+  def generate_context_notes
+    tags.each do |tag|
+      next if !tag.respond_to?(:context_note_instructions) 
+      next if tag.context_note_instructions.blank?
+      next if context_notes.where(tag_id: tag.id).exists?
+
+      Articles::GenerateContextNoteWorker.perform_async(id, tag.id)
+    end
+  end
+
   private
+
+  def get_youtube_embed_url
+    return unless video_source_url.present? && video_source_url.include?("youtube.com")
+
+    begin
+      self.video = YoutubeParser.new(video_source_url).call
+      p "Parsed YouTube video URL: #{video}" if Rails.env.development?
+    rescue StandardError => e
+      Rails.logger.error("Error parsing YouTube video URL: #{e.message}")
+    end
+  end
 
   def set_markdown_from_body_url
     return unless body_url.present?
@@ -911,6 +936,8 @@ class Article < ApplicationRecord
   end
 
   def fetch_video_duration
+    return if video_source_url&.include?("youtube.com")
+
     if video.present? && video_duration_in_seconds.zero?
       url = video_source_url.gsub(".m3u8", "1351620000001-200015_hls_v4.m3u8")
       duration = 0

@@ -1,4 +1,6 @@
 class Subforem < ApplicationRecord
+  acts_as_followable
+
   has_many :articles, dependent: :nullify
   has_many :navigation_links, dependent: :nullify
   has_many :pages, dependent: :nullify
@@ -66,12 +68,34 @@ class Subforem < ApplicationRecord
     end
   end
 
+  def self.cached_discoverable_ids
+    Rails.cache.fetch('subforem_discoverable_ids', expires_in: 12.hours) do
+      Subforem.where(discoverable: true).order("hotness_score desc").pluck(:id)
+    end
+  end
+
   def self.cached_postable_array
     Rails.cache.fetch('subforem_postable_array', expires_in: 12.hours) do
       Subforem.where(discoverable: true).pluck(:id).map { |id| [id, Settings::Community.community_name(subforem_id: id)] }
     end
   end
 
+  def data_info_to_json
+    DataInfo.to_json(object: self, class_name: "Subforem", id: id, style: "full")
+  end
+
+  def name
+    Settings::Community.community_name(subforem_id: id)
+  end
+
+  def update_scores!
+    super_duper_recent = articles.published.where("published_at > ?", 3.days.ago).where("score > 0").sum(:score)
+    super_recent = articles.published.where("published_at > ?", 2.weeks.ago).where("score > 0").sum(:score)
+    somewhat_recent = articles.published.where("published_at > ?", 6.months.ago).where("score > 0").sum(:score)
+    self.score = somewhat_recent + (super_recent * 0.1)
+    self.hotness_score = super_duper_recent + super_recent + (somewhat_recent * 0.1)
+    save
+  end
 
   private
 
@@ -79,6 +103,7 @@ class Subforem < ApplicationRecord
     Rails.cache.delete("cached_domains")
     Rails.cache.delete("subforem_id_to_domain_hash")
     Rails.cache.delete('subforem_postable_array')
+    Rails.cache.delete('subforem_discoverable_ids')
     Rails.cache.delete('subforem_root_id')
     Rails.cache.delete('subforem_default_domain')
     Rails.cache.delete('subforem_root_domain')

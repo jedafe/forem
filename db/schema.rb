@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[7.0].define(version: 2025_06_06_153122) do
+ActiveRecord::Schema[7.0].define(version: 2025_07_17_144002) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "citext"
   enable_extension "ltree"
@@ -183,6 +183,7 @@ ActiveRecord::Schema[7.0].define(version: 2025_06_06_153122) do
     t.index ["organization_id"], name: "index_articles_on_organization_id"
     t.index ["path"], name: "index_articles_on_path"
     t.index ["public_reactions_count"], name: "index_articles_on_public_reactions_count", order: :desc
+    t.index ["published", "canonical_url"], name: "index_articles_on_published_and_canonical_url"
     t.index ["published"], name: "index_articles_on_published"
     t.index ["published_at"], name: "index_articles_on_published_at"
     t.index ["reading_list_document"], name: "index_articles_on_reading_list_document", using: :gin
@@ -414,6 +415,17 @@ ActiveRecord::Schema[7.0].define(version: 2025_06_06_153122) do
     t.index ["app_bundle", "platform"], name: "index_consumer_apps_on_app_bundle_and_platform", unique: true
   end
 
+  create_table "context_notes", force: :cascade do |t|
+    t.bigint "article_id", null: false
+    t.text "body_markdown", null: false
+    t.datetime "created_at", null: false
+    t.text "processed_html", null: false
+    t.bigint "tag_id"
+    t.datetime "updated_at", null: false
+    t.index ["article_id"], name: "index_context_notes_on_article_id"
+    t.index ["tag_id"], name: "index_context_notes_on_tag_id"
+  end
+
   create_table "context_notifications", force: :cascade do |t|
     t.string "action"
     t.integer "context_id"
@@ -588,6 +600,7 @@ ActiveRecord::Schema[7.0].define(version: 2025_06_06_153122) do
     t.float "recently_active_past_day_bonus_weight", default: 0.0, null: false
     t.float "score_weight", default: 1.0
     t.float "shuffle_weight", default: 0.0, null: false
+    t.float "subforem_follow_weight", default: 0.0, null: false
     t.float "tag_follow_weight", default: 1.0
     t.datetime "updated_at", null: false
     t.float "user_follow_weight", default: 1.0
@@ -1233,9 +1246,13 @@ ActiveRecord::Schema[7.0].define(version: 2025_06_06_153122) do
     t.datetime "created_at", null: false
     t.boolean "discoverable", default: false, null: false
     t.string "domain", null: false
+    t.integer "hotness_score", default: 0, null: false
     t.boolean "root", default: false
+    t.integer "score", default: 0, null: false
     t.datetime "updated_at", null: false
     t.index ["domain"], name: "index_subforems_on_domain", unique: true
+    t.index ["hotness_score"], name: "index_subforems_on_hotness_score"
+    t.index ["score"], name: "index_subforems_on_score"
   end
 
   create_table "tag_adjustments", force: :cascade do |t|
@@ -1284,6 +1301,7 @@ ActiveRecord::Schema[7.0].define(version: 2025_06_06_153122) do
     t.bigint "badge_id"
     t.string "bg_color_hex"
     t.string "category", default: "uncategorized", null: false
+    t.text "context_note_instructions"
     t.datetime "created_at", precision: nil, null: false
     t.integer "hotness_score", default: 0
     t.string "keywords_for_search"
@@ -1345,6 +1363,7 @@ ActiveRecord::Schema[7.0].define(version: 2025_06_06_153122) do
   create_table "user_activities", force: :cascade do |t|
     t.jsonb "alltime_labels", default: []
     t.jsonb "alltime_organizations", default: []
+    t.jsonb "alltime_subforems", default: []
     t.jsonb "alltime_tags", default: []
     t.jsonb "alltime_users", default: []
     t.datetime "created_at", null: false
@@ -1608,6 +1627,8 @@ ActiveRecord::Schema[7.0].define(version: 2025_06_06_153122) do
   add_foreign_key "collections", "organizations", on_delete: :nullify
   add_foreign_key "collections", "users", on_delete: :cascade
   add_foreign_key "comments", "users", on_delete: :cascade
+  add_foreign_key "context_notes", "articles"
+  add_foreign_key "context_notes", "tags"
   add_foreign_key "credits", "organizations", on_delete: :restrict
   add_foreign_key "credits", "users", on_delete: :cascade
   add_foreign_key "devices", "consumer_apps"
