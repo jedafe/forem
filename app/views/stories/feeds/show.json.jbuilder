@@ -8,7 +8,7 @@ article_methods_to_include = %i[
   readable_publish_date flare_tag class_name
   cloudinary_video_url video_duration_in_minutes published_at_int
   published_timestamp main_image_background_hex_color
-  public_reaction_categories body_preview
+  public_reaction_categories body_preview title_finalized
 ]
 
 json.array!(@stories) do |article|
@@ -25,7 +25,7 @@ json.array!(@stories) do |article|
   json.pinned article.pinned?
 
   if article.main_image?
-    json.main_image cloud_cover_url(article.main_image)
+    json.main_image cloud_cover_url(article.main_image, article.subforem_id)
   else
     json.main_image nil
   end
