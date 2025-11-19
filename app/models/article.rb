@@ -11,7 +11,7 @@ class Article < ApplicationRecord
   resourcify
 
   include StringAttributeCleaner.nullify_blanks_for(:canonical_url, on: :before_save)
-  DEFAULT_FEED_PAGINATION_WINDOW_SIZE = 25
+  DEFAULT_FEED_PAGINATION_WINDOW_SIZE = 18
 
   # When we cache an entity, either {User} or {Organization}, these are the names of the attributes
   # we cache.
@@ -596,11 +596,31 @@ class Article < ApplicationRecord
   def title_finalized
     return title unless title.present?
 
+    # First handle line breaks and paragraphs
+    processed_title = title.dup
+
+    # Convert double line breaks to paragraph breaks (with optional whitespace)
+    processed_title.gsub!(/\n\s*\n/, "</p><p class=\"quickie-paragraph\">")
+
+    # Convert single line breaks to <br> tags
+    processed_title.gsub!("\n", "<br>")
+
+    # Wrap the entire content in paragraph tags if we have any breaks
+    if processed_title.include?("<br>") || processed_title.include?("</p><p")
+      processed_title = "<p class=\"quickie-paragraph\">#{processed_title}</p>"
+      # Clean up any empty paragraphs that might have been created
+      processed_title.gsub!("<p class=\"quickie-paragraph\"></p>", "")
+      processed_title.gsub!(%r{<p class="quickie-paragraph">\s*</p>}, "")
+      # Strip leading/trailing whitespace from paragraph content
+      processed_title.gsub!(/<p class="quickie-paragraph">\s+/, "<p class=\"quickie-paragraph\">")
+      processed_title.gsub!(%r{\s+</p>}, "</p>")
+    end
+
     # Regex to match URLs in the title
     url_regex = %r{https?://[^\s<>"{}|\\^`\[\]]+}
 
     # Replace each URL with a truncated, styled version
-    title.gsub(url_regex) do |url|
+    processed_title.gsub(url_regex) do |url|
       # Strip protocol and www
       clean_url = url.gsub(%r{^https?://}, "").gsub(/^www\./, "")
 
@@ -617,6 +637,133 @@ class Article < ApplicationRecord
       # Return HTML with styled span
       "<span style=\"text-decoration: underline;\">#{display_url}</span>"
     end.html_safe
+  end
+
+  def title_finalized_for_feed
+    return title_finalized unless type_of == "status" && title.present?
+
+    # Count total line breaks and paragraphs in the original title
+    line_break_count = title.count("\n")
+
+    # If we have 8 or more line breaks, truncate the title_finalized output
+    if line_break_count >= 8
+      truncate_title_for_feed
+    else
+      title_finalized
+    end
+  end
+
+  def truncate_title_for_feed
+    return title_finalized unless title.present?
+
+    # Split the title into lines to find a good truncation point
+    lines = title.split("\n")
+
+    # Take first 6 lines (leaving room for "read more" indicator)
+    truncated_lines = lines.first(6)
+
+    # Reconstruct the truncated title
+    truncated_title = truncated_lines.join("\n")
+
+    # Process the truncated title through the same logic as title_finalized
+    processed_title = truncated_title.dup
+
+    # Convert double line breaks to paragraph breaks (with optional whitespace)
+    processed_title.gsub!(/\n\s*\n/, "</p><p class=\"quickie-paragraph\">")
+
+    # Convert single line breaks to <br> tags
+    processed_title.gsub!("\n", "<br>")
+
+    # Wrap the entire content in paragraph tags if we have any breaks
+    if processed_title.include?("<br>") || processed_title.include?("</p><p")
+      processed_title = "<p class=\"quickie-paragraph\">#{processed_title}</p>"
+      # Clean up any empty paragraphs that might have been created
+      processed_title.gsub!("<p class=\"quickie-paragraph\"></p>", "")
+      processed_title.gsub!(%r{<p class="quickie-paragraph">\s*</p>}, "")
+      # Strip leading/trailing whitespace from paragraph content
+      processed_title.gsub!(/<p class="quickie-paragraph">\s+/, "<p class=\"quickie-paragraph\">")
+      processed_title.gsub!(%r{\s+</p>}, "</p>")
+    end
+
+    # Add "read more" indicator
+    processed_title += '<span class="quickie-read-more">...read more</span>'
+
+    # Handle URLs in the truncated content
+    url_regex = %r{https?://[^\s<>"{}|\\^`\[\]]+}
+
+    processed_title.gsub(url_regex) do |url|
+      # Strip protocol and www
+      clean_url = url.gsub(%r{^https?://}, "").gsub(/^www\./, "")
+
+      # Remove trailing slash
+      clean_url = clean_url.chomp("/")
+
+      # Truncate if longer than 25 chars
+      display_url = if clean_url.length > 25
+                      "#{clean_url[0..21]}..."
+                    else
+                      clean_url
+                    end
+
+      # Return HTML with styled span
+      "<span style=\"text-decoration: underline;\">#{display_url}</span>"
+    end.html_safe
+  end
+
+  def flare_tag
+    @flare_tag ||= FlareTag.new(self).tag_hash
+  end
+
+  def class_name
+    self.class.name
+  end
+
+  def cloudinary_video_url
+    return if video_thumbnail_url.blank?
+
+    Images::Optimizer.call(video_thumbnail_url, width: 880, quality: 80)
+  end
+
+  def published_timestamp
+    return "" unless published
+    return "" unless crossposted_at || published_at
+
+    displayable_published_at.utc.iso8601
+  end
+
+  def main_image_background_hex_color
+    self[:main_image_background_hex_color]
+  end
+
+  def body_preview
+    return unless type_of == "status"
+    return if processed_html.blank?
+
+    processed_html_final
+  end
+
+
+  def readable_publish_date
+    relevant_date = displayable_published_at
+    return unless relevant_date
+
+    if relevant_date.year == Time.current.year
+      I18n.l(relevant_date, format: :short)
+    elsif relevant_date
+      I18n.l(relevant_date, format: :short_with_yy)
+    end
+  end
+
+  def video_duration_in_minutes
+    duration = ActiveSupport::Duration.build(video_duration_in_seconds.to_i).parts
+
+    # add default hours and minutes for the substitutions below
+    duration = duration.reverse_merge(seconds: 0, minutes: 0, hours: 0)
+
+    minutes_and_seconds = format("%<minutes>02d:%<seconds>02d", duration)
+    return minutes_and_seconds if duration[:hours] < 1
+
+    "#{duration[:hours]}:#{minutes_and_seconds}"
   end
 
   def body_text
@@ -651,14 +798,6 @@ class Article < ApplicationRecord
     processed_content.has_front_matter?
   end
 
-  def class_name
-    self.class.name
-  end
-
-  def flare_tag
-    @flare_tag ||= FlareTag.new(self).tag_hash
-  end
-
   def edited?
     edited_at.present?
   end
@@ -673,26 +812,35 @@ class Article < ApplicationRecord
     end
   end
 
-  def readable_publish_date
-    relevant_date = displayable_published_at
-    return unless relevant_date
-
-    if relevant_date.year == Time.current.year
-      I18n.l(relevant_date, format: :short)
-    elsif relevant_date
-      I18n.l(relevant_date, format: :short_with_yy)
-    end
+  def skip_indexing?
+    # should the article be skipped indexed by crawlers?
+    # true if unpublished, or spammy,
+    # or low score, and not featured
+    !published ||
+      (score < Settings::UserExperience.index_minimum_score && !featured) ||
+      published_at.to_i < Settings::UserExperience.index_minimum_date.to_i ||
+      score < -1
   end
 
-  def published_timestamp
-    return "" unless published
-    return "" unless crossposted_at || published_at
+  def skip_indexing_reason
+    return "unpublished" unless published
+    return "negative_score" if score < -1
+    return "below_minimum_score" if score < Settings::UserExperience.index_minimum_score && !featured
+    return "below_minimum_date" if published_at.to_i < Settings::UserExperience.index_minimum_date.to_i
 
-    displayable_published_at.utc.iso8601
+    "indexed"
   end
 
   def displayable_published_at
     crossposted_at.presence || published_at
+  end
+
+  def title_for_metadata
+    return title unless type_of == "status" && title.present?
+
+    # For quickies, return a clean single-line version of the title
+    # Replace line breaks with spaces and normalize whitespace
+    title.gsub(/\s*\n\s*/, " ").gsub(/\s+/, " ").strip
   end
 
   def series
@@ -701,26 +849,38 @@ class Article < ApplicationRecord
   end
 
   def all_series
-    # all series names
-    user&.collections&.pluck(:slug)
-  end
+    # all series names - includes user's personal collections and organization collections
+    # Returns array of hashes with slug and organization info for UI display
+    return [] unless user
 
-  def cloudinary_video_url
-    return if video_thumbnail_url.blank?
+    series_list = []
 
-    Images::Optimizer.call(video_thumbnail_url, width: 880, quality: 80)
-  end
+    # Get user's personal collections (no organization)
+    user.collections.where(organization_id: nil).each do |collection|
+      series_list << {
+        slug: collection.slug,
+        organization_id: nil,
+        organization_name: nil,
+        is_personal: true
+      }
+    end
 
-  def video_duration_in_minutes
-    duration = ActiveSupport::Duration.build(video_duration_in_seconds.to_i).parts
+    # Get collections from organizations the user is a member of
+    Collection.joins(organization: :organization_memberships)
+      .where(organization_memberships: { user_id: user.id })
+      .includes(:organization)
+      .each do |collection|
+        series_list << {
+          slug: collection.slug,
+          organization_id: collection.organization_id,
+          organization_name: collection.organization.name,
+          is_personal: false
+        }
+      end
 
-    # add default hours and minutes for the substitutions below
-    duration = duration.reverse_merge(seconds: 0, minutes: 0, hours: 0)
-
-    minutes_and_seconds = format("%<minutes>02d:%<seconds>02d", duration)
-    return minutes_and_seconds if duration[:hours] < 1
-
-    "#{duration[:hours]}:#{minutes_and_seconds}"
+    # For backward compatibility, also support returning just slugs when called as array
+    # But when serialized to JSON, it will return the full hash
+    series_list
   end
 
   def update_score
@@ -740,8 +900,8 @@ class Article < ApplicationRecord
     # Context notes are currently only a positive indicator. In the future, they could be negative and this should be changed.
     context_note_adjustment = context_notes.size
 
-          # Content moderation label adjustments
-      automod_label_adjustment = AUTOMOD_SCORE_ADJUSTMENTS[automod_label.to_sym] || 0
+    # Content moderation label adjustments
+    automod_label_adjustment = AUTOMOD_SCORE_ADJUSTMENTS[automod_label.to_sym] || 0
 
     self.score = reactions.sum(:points) + spam_adjustment + negative_reaction_adjustment + base_subscriber_adjustment + user_featured_count_adjustment + user_negative_count_adjustment + context_note_adjustment + automod_label_adjustment
     accepted_max = [max_score, user&.max_score.to_i].min
@@ -749,7 +909,8 @@ class Article < ApplicationRecord
     self.score = accepted_max if accepted_max.positive? && accepted_max < score
 
     # Calculate comment_score and apply max_score limits
-    calculated_comment_score = comments.sum(:score)
+    # Each comment can contribute a minimum of -1 to the total score
+    calculated_comment_score = comments.sum { |comment| [comment.score, -1].max }
     comment_score = if accepted_max.positive? && accepted_max < calculated_comment_score
                       accepted_max
                     else
@@ -793,25 +954,6 @@ class Article < ApplicationRecord
     body_url.present? # Returns true if body_url is not nil or an empty string
   end
 
-  def skip_indexing?
-    # should the article be skipped indexed by crawlers?
-    # true if unpublished, or spammy,
-    # or low score, and not featured
-    !published ||
-      (score < Settings::UserExperience.index_minimum_score && !featured) ||
-      published_at.to_i < Settings::UserExperience.index_minimum_date.to_i ||
-      score < -1
-  end
-
-  def skip_indexing_reason
-    return "unpublished" unless published
-    return "negative_score" if score < -1
-    return "below_minimum_score" if score < Settings::UserExperience.index_minimum_score && !featured
-    return "below_minimum_date" if published_at.to_i < Settings::UserExperience.index_minimum_date.to_i
-
-    "unknown"
-  end
-
   def privileged_reaction_counts
     @privileged_reaction_counts ||= reactions.privileged_category.group(:category).count
   end
@@ -834,12 +976,6 @@ class Article < ApplicationRecord
     update_column(:processed_html, result.processed_html)
   end
 
-  def body_preview
-    return unless type_of == "status"
-
-    processed_html_final
-  end
-
   def labels=(input)
     adjusted_input = input.is_a?(String) ? input.delete(" ").split(",") : input
     self[:cached_label_list] = (adjusted_input || [])
@@ -854,8 +990,6 @@ class Article < ApplicationRecord
       Articles::GenerateContextNoteWorker.perform_async(id, tag.id)
     end
   end
-
-  private
 
   def set_default_subforem_id
     # Set subforem_id to default subforem ID if not already set and a default subforem exists
@@ -931,8 +1065,8 @@ class Article < ApplicationRecord
 
     self.title = title
       .gsub(TITLE_CHARACTERS_ALLOWED, " ")
-      # Coalesce runs of whitespace into a single space character
-      .gsub(/\s+/, " ")
+      # For status posts, preserve line breaks; for other posts, coalesce whitespace
+      .gsub(type_of == "status" ? /[ \t]+/ : /\s+/, " ")
       .strip
   end
 
@@ -965,16 +1099,26 @@ class Article < ApplicationRecord
   end
 
   def restrict_attributes_with_status_types
-    # Return early if this is already saved and the body_markdown hasn't changed
-    return if persisted? && !body_markdown_changed?
+    return unless type_of == "status"
 
-    # For status types, allow body_markdown only if it contains embed tags from URLs in title
-    if type_of == "status" && body_url.blank? && body_markdown.present?
+    # If the article is already persisted and body_markdown is being changed, 
+    # show a different error about edit restrictions
+    # Check if the value actually changed, not just if Rails marked it as changed
+    if persisted? && body_markdown_changed? && body_markdown_was != body_markdown
+      errors.add(:body_markdown, "cannot be modified for status type posts. Consider unpublishing if you need to make changes.")
+      return
+    end
+
+    # Return early if this is already saved and the body_markdown hasn't changed
+    return if persisted?
+
+    # For new status types, allow body_markdown only if it contains embed tags from URLs in title
+    if body_url.blank? && body_markdown.present?
       # Allow body_markdown if it only contains embed tags that were added from URLs in title
       unless body_markdown_only_contains_embed_tags_from_title?
         errors.add(:body_markdown, "is not allowed for status types")
       end
-    elsif type_of == "status" && body_url.blank? && (main_image.present? || collection_id.present?)
+    elsif body_url.blank? && (main_image.present? || collection_id.present?)
       errors.add(:body_markdown, "is not allowed for status types")
     end
   end
@@ -1079,7 +1223,10 @@ class Article < ApplicationRecord
     self.description = hash["description"] if update_description
 
     self.collection_id = nil if hash["title"].present?
-    self.collection_id = Collection.find_series(hash["series"], user).id if hash["series"].present?
+    if hash["series"].present?
+      collection = Collection.find_series(hash["series"], user, organization: organization)
+      self.collection_id = collection.id
+    end
   end
 
   def set_main_image(hash)
@@ -1145,6 +1292,14 @@ class Article < ApplicationRecord
 
   def validate_collection_permission
     return unless collection && collection.user_id != user_id
+
+    # Allow org members to add articles to org collections
+    if collection.organization_id.present?
+      org = collection.organization
+      # Check if user is a member/admin of the collection's organization
+      # and if the article is being published under that organization
+      return if user.org_member?(org) && organization_id == collection.organization_id
+    end
 
     errors.add(:collection_id, I18n.t("models.article.series_unpermitted"))
   end
@@ -1344,7 +1499,8 @@ class Article < ApplicationRecord
 
   def should_add_urls_from_title?
     # Only add URLs from title for quickie posts (status type) that have a title with URLs
-    type_of == "status" && title.present? && extract_urls_from_title.any?
+    # Only run this when the title has changed or it's a new record to avoid duplicating embed tags
+    type_of == "status" && title.present? && extract_urls_from_title.any? && (new_record? || title_changed?)
   end
 
   def add_urls_from_title_to_body

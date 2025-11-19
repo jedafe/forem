@@ -155,6 +155,7 @@ Rails.application.routes.draw do
       end
     end
     resources :image_uploads, only: [:create]
+    resources :ai_image_generations, only: [:create]
     resources :notifications, only: [:index]
     resources :tags, only: [:index] do
       collection do
@@ -173,6 +174,15 @@ Rails.application.routes.draw do
     resources :subforems, only: %i[index new edit update] do
       member do
         post :add_tag
+        delete :remove_tag
+        post :create_navigation_link
+        patch 'update_navigation_link/:navigation_link_id', to: 'subforems#update_navigation_link', as: :update_navigation_link
+        delete :destroy_navigation_link
+        get :new_page
+        post :create_page
+        get 'edit_page/:page_id', to: 'subforems#edit_page', as: :edit_page
+        patch 'update_page/:page_id', to: 'subforems#update_page', as: :update_page
+        delete 'destroy_page/:page_id', to: 'subforems#destroy_page', as: :destroy_page
       end
     end
     get "/manage", to: "subforems#edit", as: :manage_subforem
@@ -314,6 +324,7 @@ Rails.application.routes.draw do
     get "/💸", to: redirect("t/hiring")
     get "/survey", to: redirect("https://dev.to/ben/final-thoughts-on-the-state-of-the-web-survey-44nn")
     get "/search", to: "stories/articles_search#index"
+    get "/community", to: "community#index", as: :community
     get "/:slug/members", to: "organizations#members", as: :organization_members
     post "articles/preview", to: "articles#preview"
     post "comments/preview", to: "comments#preview"

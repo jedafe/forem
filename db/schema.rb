@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[7.0].define(version: 2025_09_24_131831) do
+ActiveRecord::Schema[7.0].define(version: 2025_11_18_173354) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "citext"
   enable_extension "ltree"
@@ -256,6 +256,7 @@ ActiveRecord::Schema[7.0].define(version: 2025_09_24_131831) do
   create_table "billboard_placement_area_configs", force: :cascade do |t|
     t.datetime "created_at", null: false
     t.string "placement_area", null: false
+    t.jsonb "selection_weights", default: {}, null: false
     t.integer "signed_in_rate", default: 100, null: false
     t.integer "signed_out_rate", default: 100, null: false
     t.datetime "updated_at", null: false
@@ -388,7 +389,7 @@ ActiveRecord::Schema[7.0].define(version: 2025_09_24_131831) do
     t.datetime "updated_at", precision: nil, null: false
     t.bigint "user_id"
     t.index ["organization_id"], name: "index_collections_on_organization_id"
-    t.index ["slug", "user_id"], name: "index_collections_on_slug_and_user_id", unique: true
+    t.index ["slug", "user_id", "organization_id"], name: "index_collections_on_slug_and_user_id_and_organization_id", unique: true
     t.index ["user_id"], name: "index_collections_on_user_id"
   end
 
@@ -527,6 +528,7 @@ ActiveRecord::Schema[7.0].define(version: 2025_09_24_131831) do
     t.string "cached_tag_list"
     t.integer "clicks_count", default: 0
     t.string "color"
+    t.datetime "content_updated_at"
     t.datetime "counts_tabulated_at"
     t.datetime "created_at", precision: nil, null: false
     t.integer "creator_id"
@@ -595,8 +597,11 @@ ActiveRecord::Schema[7.0].define(version: 2025_09_24_131831) do
     t.string "targeted_tags", default: [], array: true
     t.integer "type_of", default: 0
     t.datetime "updated_at", null: false
+    t.bigint "user_query_id"
+    t.text "variables"
     t.index ["audience_segment_id"], name: "index_emails_on_audience_segment_id"
     t.index ["onboarding_subforem_id"], name: "index_emails_on_onboarding_subforem_id"
+    t.index ["user_query_id"], name: "index_emails_on_user_query_id"
   end
 
   create_table "feed_configs", force: :cascade do |t|
@@ -628,6 +633,7 @@ ActiveRecord::Schema[7.0].define(version: 2025_09_24_131831) do
     t.float "recently_active_past_day_bonus_weight", default: 0.0, null: false
     t.float "score_weight", default: 1.0
     t.float "shuffle_weight", default: 0.0, null: false
+    t.float "status_weight", default: 0.0, null: false
     t.float "subforem_follow_weight", default: 0.0, null: false
     t.float "tag_follow_weight", default: 1.0
     t.datetime "updated_at", null: false
@@ -752,6 +758,7 @@ ActiveRecord::Schema[7.0].define(version: 2025_09_24_131831) do
     t.integer "watchers_count"
     t.index ["github_id_code"], name: "index_github_repos_on_github_id_code", unique: true
     t.index ["url"], name: "index_github_repos_on_url", unique: true
+    t.index ["user_id", "featured"], name: "index_github_repos_on_user_id_and_featured"
   end
 
   create_table "html_variants", force: :cascade do |t|
@@ -789,6 +796,13 @@ ActiveRecord::Schema[7.0].define(version: 2025_09_24_131831) do
     t.index ["slug"], name: "index_labels_on_slug", unique: true
   end
 
+  create_table "media_sources", force: :cascade do |t|
+    t.datetime "created_at", null: false
+    t.string "display_url", null: false
+    t.string "input_url", null: false
+    t.datetime "updated_at", null: false
+  end
+
   create_table "media_stores", force: :cascade do |t|
     t.datetime "created_at", null: false
     t.integer "media_type", default: 0, null: false
@@ -811,7 +825,8 @@ ActiveRecord::Schema[7.0].define(version: 2025_09_24_131831) do
     t.datetime "created_at", null: false
     t.boolean "display_only_when_signed_in", default: false
     t.integer "display_to", default: 0, null: false
-    t.string "icon", null: false
+    t.string "icon"
+    t.string "image"
     t.string "name", null: false
     t.integer "position"
     t.integer "section", default: 0, null: false
@@ -1143,6 +1158,7 @@ ActiveRecord::Schema[7.0].define(version: 2025_09_24_131831) do
     t.datetime "created_at", null: false
     t.jsonb "data", default: {}, null: false
     t.string "location"
+    t.string "social_image"
     t.text "summary"
     t.datetime "updated_at", null: false
     t.bigint "user_id", null: false
@@ -1217,6 +1233,26 @@ ActiveRecord::Schema[7.0].define(version: 2025_09_24_131831) do
     t.index ["name"], name: "index_roles_on_name"
   end
 
+  create_table "scheduled_automations", force: :cascade do |t|
+    t.string "action", null: false
+    t.jsonb "action_config", default: {}
+    t.text "additional_instructions"
+    t.datetime "created_at", null: false
+    t.boolean "enabled", default: true, null: false
+    t.string "frequency", null: false
+    t.jsonb "frequency_config", default: {}
+    t.datetime "last_run_at"
+    t.datetime "next_run_at"
+    t.string "service_name", null: false
+    t.string "state", default: "active", null: false
+    t.datetime "updated_at", null: false
+    t.bigint "user_id", null: false
+    t.index ["next_run_at"], name: "index_scheduled_automations_on_next_run_at"
+    t.index ["state", "next_run_at"], name: "index_scheduled_automations_on_state_and_next_run_at"
+    t.index ["user_id", "enabled"], name: "index_scheduled_automations_on_user_id_and_enabled"
+    t.index ["user_id"], name: "index_scheduled_automations_on_user_id"
+  end
+
   create_table "segmented_users", force: :cascade do |t|
     t.bigint "audience_segment_id", null: false
     t.datetime "created_at", null: false
@@ -1233,7 +1269,6 @@ ActiveRecord::Schema[7.0].define(version: 2025_09_24_131831) do
     t.datetime "updated_at", null: false
     t.text "value"
     t.string "var", null: false
-    t.index ["subforem_id"], name: "index_settings_authentications_on_subforem_id"
     t.index ["var", "subforem_id"], name: "index_settings_authentications_on_var_and_subforem_id", unique: true
   end
 
@@ -1243,7 +1278,6 @@ ActiveRecord::Schema[7.0].define(version: 2025_09_24_131831) do
     t.datetime "updated_at", null: false
     t.text "value"
     t.string "var", null: false
-    t.index ["subforem_id"], name: "index_settings_campaigns_on_subforem_id"
     t.index ["var", "subforem_id"], name: "index_settings_campaigns_on_var_and_subforem_id", unique: true
   end
 
@@ -1253,7 +1287,6 @@ ActiveRecord::Schema[7.0].define(version: 2025_09_24_131831) do
     t.datetime "updated_at", null: false
     t.text "value"
     t.string "var", null: false
-    t.index ["subforem_id"], name: "index_settings_communities_on_subforem_id"
     t.index ["var", "subforem_id"], name: "index_settings_communities_on_var_and_subforem_id", unique: true
   end
 
@@ -1263,7 +1296,6 @@ ActiveRecord::Schema[7.0].define(version: 2025_09_24_131831) do
     t.datetime "updated_at", null: false
     t.text "value"
     t.string "var", null: false
-    t.index ["subforem_id"], name: "index_settings_rate_limits_on_subforem_id"
     t.index ["var", "subforem_id"], name: "index_settings_rate_limits_on_var_and_subforem_id", unique: true
   end
 
@@ -1273,7 +1305,6 @@ ActiveRecord::Schema[7.0].define(version: 2025_09_24_131831) do
     t.datetime "updated_at", null: false
     t.text "value"
     t.string "var", null: false
-    t.index ["subforem_id"], name: "index_settings_smtp_on_subforem_id"
     t.index ["var", "subforem_id"], name: "index_settings_smtp_on_var_and_subforem_id", unique: true
   end
 
@@ -1283,17 +1314,15 @@ ActiveRecord::Schema[7.0].define(version: 2025_09_24_131831) do
     t.datetime "updated_at", null: false
     t.text "value"
     t.string "var", null: false
-    t.index ["subforem_id"], name: "index_settings_user_experiences_on_subforem_id"
     t.index ["var", "subforem_id"], name: "index_settings_user_experiences_on_var_and_subforem_id", unique: true
   end
 
   create_table "site_configs", force: :cascade do |t|
     t.datetime "created_at", precision: nil, null: false
-    t.bigint "subforem_id"
+    t.integer "subforem_id"
     t.datetime "updated_at", precision: nil, null: false
     t.text "value"
     t.string "var", null: false
-    t.index ["subforem_id"], name: "index_site_configs_on_subforem_id"
     t.index ["var", "subforem_id"], name: "index_site_configs_on_var_and_subforem_id", unique: true
   end
 
@@ -1475,6 +1504,25 @@ ActiveRecord::Schema[7.0].define(version: 2025_09_24_131831) do
     t.index ["user_id"], name: "index_user_languages_on_user_id"
   end
 
+  create_table "user_queries", force: :cascade do |t|
+    t.boolean "active", default: true, null: false
+    t.datetime "created_at", null: false
+    t.bigint "created_by_id", null: false
+    t.text "description"
+    t.integer "execution_count", default: 0, null: false
+    t.datetime "last_executed_at"
+    t.integer "max_execution_time_ms", default: 30000, null: false
+    t.string "name", null: false
+    t.text "query", null: false
+    t.datetime "updated_at", null: false
+    t.text "variable_definitions"
+    t.text "variables"
+    t.index ["active"], name: "index_user_queries_on_active"
+    t.index ["created_by_id"], name: "index_user_queries_on_created_by_id"
+    t.index ["last_executed_at"], name: "index_user_queries_on_last_executed_at"
+    t.index ["name"], name: "index_user_queries_on_name", unique: true
+  end
+
   create_table "user_subscriptions", force: :cascade do |t|
     t.bigint "author_id", null: false
     t.datetime "created_at", null: false
@@ -1544,7 +1592,7 @@ ActiveRecord::Schema[7.0].define(version: 2025_09_24_131831) do
     t.datetime "last_article_at", precision: nil, default: "2017-01-01 05:00:00"
     t.datetime "last_comment_at", precision: nil, default: "2017-01-01 05:00:00"
     t.datetime "last_followed_at", precision: nil
-    t.datetime "last_moderation_notification", precision: nil, default: "2017-01-01 00:00:00"
+    t.datetime "last_moderation_notification", precision: nil, default: "2017-01-01 05:00:00"
     t.datetime "last_notification_activity", precision: nil
     t.string "last_onboarding_page"
     t.datetime "last_reacted_at", precision: nil
@@ -1652,6 +1700,7 @@ ActiveRecord::Schema[7.0].define(version: 2025_09_24_131831) do
   end
 
   create_table "users_settings", force: :cascade do |t|
+    t.boolean "auto_relocation_enabled", default: true, null: false
     t.string "brand_color1", default: "#000000"
     t.integer "config_font", default: 0, null: false
     t.integer "config_homepage_feed", default: 0, null: false
@@ -1722,6 +1771,7 @@ ActiveRecord::Schema[7.0].define(version: 2025_09_24_131831) do
   add_foreign_key "display_ads", "organizations", on_delete: :cascade
   add_foreign_key "email_authorizations", "users", on_delete: :cascade
   add_foreign_key "emails", "audience_segments"
+  add_foreign_key "emails", "user_queries"
   add_foreign_key "feed_events", "articles", on_delete: :cascade
   add_foreign_key "feed_events", "users", on_delete: :nullify
   add_foreign_key "feedback_messages", "users", column: "affected_id", on_delete: :nullify
@@ -1761,6 +1811,7 @@ ActiveRecord::Schema[7.0].define(version: 2025_09_24_131831) do
   add_foreign_key "reactions", "users", on_delete: :cascade
   add_foreign_key "recommended_articles_lists", "users"
   add_foreign_key "response_templates", "users"
+  add_foreign_key "scheduled_automations", "users"
   add_foreign_key "segmented_users", "audience_segments"
   add_foreign_key "segmented_users", "users"
   add_foreign_key "survey_completions", "surveys"
@@ -1777,6 +1828,7 @@ ActiveRecord::Schema[7.0].define(version: 2025_09_24_131831) do
   add_foreign_key "user_blocks", "users", column: "blocked_id"
   add_foreign_key "user_blocks", "users", column: "blocker_id"
   add_foreign_key "user_languages", "users"
+  add_foreign_key "user_queries", "users", column: "created_by_id"
   add_foreign_key "user_subscriptions", "users", column: "author_id"
   add_foreign_key "user_subscriptions", "users", column: "subscriber_id"
   add_foreign_key "user_visit_contexts", "users"
